@@ -5,6 +5,6 @@ import play.api.Logger
 import scala.concurrent.Future
 import play.api.libs.concurrent.Execution.Implicits.defaultContext
 
-object Global extends WithFilters() {
+object Global {
 
 }
