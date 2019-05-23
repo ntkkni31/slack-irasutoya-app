@@ -32,9 +32,10 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
         case Some(x) =>
           val keyword = x("text").head
           val responseUrl = x("response_url").head
+          val command = x("command").head
 
           if(keyword != null && keyword.length > 0) {
-            respondCommand(keyword, responseUrl)
+            respondImage(keyword, responseUrl, command)
           }
 
         case None =>
@@ -48,7 +49,7 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     Ok
   }
 
-  private def respondCommand(keyword: String, responseUrl: String):Unit = Future {
+  private def respondImage(keyword: String, responseUrl: String, command: String):Unit = Future {
     try {
       val browser = JsoupBrowser()
       val doc = browser.get("https://www.irasutoya.com/search?q=" + URLEncoder.encode(keyword, "UTF-8") )
@@ -89,21 +90,42 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
                 imageUrl = "https:" + imageUrl
               }
 
-              val payload = Json.obj(
-                "response_type" -> "in_channel",
-                "blocks" -> Json.arr(
-                  Json.obj(
-                    "type" -> "image",
-                    "title" -> Json.obj(
-                      "type" -> "plain_text",
-                      "text" -> imageTitleElem.text,
-                      "emoji" -> true
-                    ),
-                    "image_url" -> imageUrl,
-                    "alt_text" -> imageTitleElem.text
+              val payload = command match {
+                case "/irasutoya" => Json.obj(
+                  "response_type" -> "in_channel",
+                  "blocks" -> Json.arr(
+                    Json.obj(
+                      "type" -> "image",
+                      "title" -> Json.obj(
+                        "type" -> "plain_text",
+                        "text" -> imageTitleElem.text,
+                        "emoji" -> true
+                      ),
+                      "image_url" -> imageUrl,
+                      "alt_text" -> imageTitleElem.text
+                    )
                   )
                 )
-              )
+                case "/irasutoya_message" => Json.obj(
+                  "response_type" -> "in_channel",
+                  "blocks" -> Json.arr(
+                    Json.obj(
+                      "type" -> "section",
+                      "text" -> Json.obj(
+                        "type" -> "mrkdwn",
+                        "text" -> keyword
+                      ),
+                      "accessory" -> Json.obj(
+                        "type" -> "image",
+                        "image_url" -> imageUrl,
+                        "alt_text" -> imageTitleElem.text
+                      )
+                    )
+                  )
+                )
+                case _ => Json.obj()
+              }
+
 
               ws.url(responseUrl).addHttpHeaders("Content-Type" -> "application/json")
                 .withRequestTimeout(5000.millis)
