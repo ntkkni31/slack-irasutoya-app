@@ -35,32 +35,33 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
           val command = x("command").head
 
           if(keyword != null && keyword.length > 0) {
-            respondImage(keyword, responseUrl, command)
+            command match {
+              case "/irasutoya" => respondImage(keyword, responseUrl)
+              case "/irasutoya_message" => respondMessage(keyword, responseUrl)
+              case _ =>
+            }
           }
 
         case None =>
       }
 
     } catch {
-      case e:Exception =>
-        e.printStackTrace()
+      case e:Exception => e.printStackTrace()
     }
 
     Ok
   }
 
-  private def respondImage(keyword: String, responseUrl: String, command: String):Unit = Future {
+  private def respondImage(keyword: String, responseUrl: String):Unit = Future {
     try {
       val browser = JsoupBrowser()
       val doc = browser.get("https://www.irasutoya.com/search?q=" + URLEncoder.encode(keyword, "UTF-8") )
 
       val items = doc >> elementList("div.date-outer div.boxim")
 
-      items match {
+      val messageJson = items match {
         case Nil =>
-          ws.url(responseUrl).addHttpHeaders("Content-Type" -> "application/json")
-            .withRequestTimeout(5000.millis)
-            .post(Json.obj("text" -> s"すみません！ キーワード「${keyword}」にマッチするイラストは見つかりませんでした..."))
+          Json.obj("text" -> s"すみません！ キーワード「$keyword」にマッチするイラストは見つかりませんでした...")
         case _ =>
           val url = items.head >> attr("href")("a")
 
@@ -72,9 +73,7 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
           images match {
             case Nil =>
-              ws.url(responseUrl).addHttpHeaders("Content-Type" -> "application/json")
-                .withRequestTimeout(5000.millis)
-                .post(Json.obj("text" -> s"すみません！ キーワード「${keyword}」にマッチするイラストは見つかりませんでした..."))
+              Json.obj("text" -> s"すみません！ キーワード「$keyword」にマッチするイラストは見つかりませんでした...")
             case _ =>
               // 複数ある場合はランダムに選択
               val r = Random.nextInt(images.size)
@@ -90,50 +89,74 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
                 imageUrl = "https:" + imageUrl
               }
 
-              val payload = command match {
-                case "/irasutoya" => Json.obj(
-                  "response_type" -> "in_channel",
-                  "blocks" -> Json.arr(
-                    Json.obj(
-                      "type" -> "image",
-                      "title" -> Json.obj(
-                        "type" -> "plain_text",
-                        "text" -> imageTitleElem.text,
-                        "emoji" -> true
-                      ),
-                      "image_url" -> imageUrl,
-                      "alt_text" -> imageTitleElem.text
-                    )
+              Json.obj(
+                "response_type" -> "in_channel",
+                "blocks" -> Json.arr(
+                  Json.obj(
+                    "type" -> "image",
+                    "title" -> Json.obj(
+                      "type" -> "plain_text",
+                      "text" -> imageTitleElem.text,
+                      "emoji" -> true
+                    ),
+                    "image_url" -> imageUrl,
+                    "alt_text" -> imageTitleElem.text
                   )
                 )
-                case "/irasutoya_message" => Json.obj(
-                  "response_type" -> "in_channel",
-                  "blocks" -> Json.arr(
-                    Json.obj(
-                      "type" -> "section",
-                      "text" -> Json.obj(
-                        "type" -> "mrkdwn",
-                        "text" -> keyword
-                      ),
-                      "accessory" -> Json.obj(
-                        "type" -> "image",
-                        "image_url" -> imageUrl,
-                        "alt_text" -> imageTitleElem.text
-                      )
-                    )
-                  )
-                )
-                case _ => Json.obj()
-              }
-
-
-              ws.url(responseUrl).addHttpHeaders("Content-Type" -> "application/json")
-                .withRequestTimeout(5000.millis)
-                .post(payload)
+              )
           }
       }
+
+      ws.url(responseUrl).addHttpHeaders("Content-Type" -> "application/json")
+        .withRequestTimeout(5000.millis)
+        .post(messageJson)
+
     } catch {
       case e:Exception => e.printStackTrace()
+    }
+  }
+
+  private def respondMessage(keyword: String, responseUrl: String):Unit = Future {
+    try {
+      ws.url("https://wy59x9hce3.execute-api.ap-northeast-1.amazonaws.com/Prod/search?keyword=" + URLEncoder.encode(keyword, "UTF-8"))
+        .withRequestTimeout(5000.millis)
+        .get()
+        .map {
+          response =>
+            val messageJson = if ((response.json \ "hits" \ "total").as[Int] > 0) {
+              val source = response.json \ "hits" \ "hits" \ 0 \ "_source"
+              var imageUrl = (source \ "image").as[String]
+              val imageTitle = (source \ "title").as[String]
+
+              imageUrl = imageUrl.replaceAll("/s1/", "/s256/")
+
+              Json.obj(
+                "response_type" -> "in_channel",
+                "blocks" -> Json.arr(
+                  Json.obj(
+                    "type" -> "section",
+                    "text" -> Json.obj(
+                      "type" -> "mrkdwn",
+                      "text" -> keyword
+                    ),
+                    "accessory" -> Json.obj(
+                      "type" -> "image",
+                      "image_url" -> imageUrl,
+                      "alt_text" -> imageTitle
+                    )
+                  )
+                )
+              )
+            } else {
+              Json.obj("text" -> s"すみません！ キーワード「$keyword」にマッチするイラストは見つかりませんでした...")
+            }
+
+            ws.url(responseUrl).addHttpHeaders("Content-Type" -> "application/json")
+              .withRequestTimeout(5000.millis)
+              .post(messageJson)
+        }
+    } catch {
+      case e: Exception => e.printStackTrace()
     }
   }
 }
