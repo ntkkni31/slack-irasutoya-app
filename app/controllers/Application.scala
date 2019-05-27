@@ -22,7 +22,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends AbstractController(cc) {
 
   def index = Action {
-    Ok(views.html.index(null))
+    Ok
   }
 
   def command = Action { request =>
