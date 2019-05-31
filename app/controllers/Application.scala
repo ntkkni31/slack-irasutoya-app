@@ -33,11 +33,12 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
           val keyword = x("text").head
           val responseUrl = x("response_url").head
           val command = x("command").head
+          val userId = x("user_id").head
 
           if(keyword != null && keyword.length > 0) {
             command match {
               case "/irasutoya" => respondImage(keyword, responseUrl)
-              case "/irasutoya_message" => respondMessage(keyword, responseUrl)
+              case "/irasutoya_message" => respondMessage(keyword, responseUrl, userId)
               case _ =>
             }
           }
@@ -116,7 +117,7 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     }
   }
 
-  private def respondMessage(keyword: String, responseUrl: String):Unit = Future {
+  private def respondMessage(keyword: String, responseUrl: String, userId: String):Unit = Future {
     try {
       ws.url("https://wy59x9hce3.execute-api.ap-northeast-1.amazonaws.com/Prod/search?keyword=" + URLEncoder.encode(keyword, "UTF-8"))
         .withRequestTimeout(5000.millis)
@@ -132,6 +133,8 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
               Json.obj(
                 "response_type" -> "in_channel",
+                "as_user" -> true,
+                "user_id" -> userId,
                 "blocks" -> Json.arr(
                   Json.obj(
                     "type" -> "section",
