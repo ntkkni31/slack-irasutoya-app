@@ -5,7 +5,7 @@ import java.net.URLEncoder
 import javax.inject.{Inject, Singleton}
 import net.ruippeixotog.scalascraper.browser.JsoupBrowser
 import play.api._
-import play.api.mvc._
+import play.api.mvc.{Action, _}
 import play.api.db._
 import play.api.libs.json.Json
 import net.ruippeixotog.scalascraper.dsl.DSL._
@@ -161,5 +161,13 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     } catch {
       case e: Exception => e.printStackTrace()
     }
+  }
+
+  def event = Action { request =>
+    val json = request.body.asJson
+
+    println(json.get.toString())
+
+    Ok(json.get.toString())
   }
 }
