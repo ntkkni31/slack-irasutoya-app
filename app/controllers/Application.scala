@@ -37,7 +37,7 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
           if(keyword != null && keyword.length > 0) {
             command match {
-              case "/irasutoya" => respondImage(keyword, responseUrl)
+              case "/irasutoya" => respondImage(keyword, responseUrl, userId)
               case "/irasutoya_message" => respondMessage(keyword, responseUrl, userId)
               case _ =>
             }
@@ -53,7 +53,7 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     Ok
   }
 
-  private def respondImage(keyword: String, responseUrl: String):Unit = Future {
+  private def respondImage(keyword: String, responseUrl: String, userId: String):Unit = Future {
     try {
       val browser = JsoupBrowser()
       val doc = browser.get("https://www.irasutoya.com/search?q=" + URLEncoder.encode(keyword, "UTF-8") )
@@ -102,6 +102,15 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
                     ),
                     "image_url" -> imageUrl,
                     "alt_text" -> imageTitleElem.text
+                  ),
+                  Json.obj(
+                    "type" -> "context",
+                    "elements" -> Json.arr(
+                      Json.obj(
+                        "type" -> "mrkdwn",
+                        "text" -> s"Author: <@$userId>"
+                      )
+                    )
                   )
                 )
               )
