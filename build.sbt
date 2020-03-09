@@ -15,3 +15,6 @@ libraryDependencies ++= Seq(
 
 libraryDependencies <+= scalaVersion("org.scala-lang" % "scala-compiler" % _ )
 libraryDependencies += "net.ruippeixotog" %% "scala-scraper" % "2.1.0"
+
+// https://mvnrepository.com/artifact/com.sendgrid/sendgrid-java
+libraryDependencies += "com.sendgrid" % "sendgrid-java" % "4.4.5"
