@@ -16,12 +16,31 @@ import org.joda.time.{DateTime, DateTimeZone}
 
 @Singleton
 class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends AbstractController(cc) {
-  def takeOrder = Action { request =>
+
+  def takeOrder = Action { _ =>
 
     try {
       val now = DateTime.now(DateTimeZone.forID("Asia/Tokyo"))
 
-      if (now.getDayOfWeek < 6 && !isPublicHoliday(now)) {
+      val publicHoliday = getPublicHoliday(now)
+
+      val messageJson = if (now.getDayOfWeek < 1 || 5 < now.getDayOfWeek) {
+        None
+      } else if (publicHoliday.nonEmpty) {
+        val publicHolidayJson = Json.obj(
+          "blocks" -> Json.arr(
+            Json.obj(
+              "type" -> "section",
+              "text" -> Json.obj(
+                "type" -> "mrkdwn",
+                "text" -> s"本日は *${publicHoliday.get}* です。"
+              )
+            )
+          )
+        )
+
+        Some(publicHolidayJson)
+      } else {
         val takeOrderJson = Json.obj(
           "blocks" -> Json.arr(
             Json.obj(
@@ -67,11 +86,17 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
           )
         )
 
-        val url = ConfigFactory.load().getString("tamagoya.takeOrder.webhookUrl")
-        ws.url(url).addHttpHeaders("Content-Type" -> "application/json")
-          .withRequestTimeout(5000.millis)
-          .post(takeOrderJson)
+        Some(takeOrderJson)
       }
+
+      messageJson match {
+        case Some(json) =>  val url = ConfigFactory.load().getString("tamagoya.takeOrder.webhookUrl")
+          ws.url(url).addHttpHeaders("Content-Type" -> "application/json")
+            .withRequestTimeout(5000.millis)
+            .post(json)
+        case None =>
+      }
+
     } catch {
       case e: Exception => e.printStackTrace()
     }
@@ -106,7 +131,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
             val orderStop = config.getString("tamagoya.orderStopTime").split(':')
             val orderStopMinutes = orderStop(0).toInt * 60 + orderStop(1).toInt
 
-            if (messageDate.getDayOfMonth != now.getDayOfMonth || now.getMinuteOfDay > orderStopMinutes) {
+            if (messageDate.getDayOfMonth != now.getDayOfMonth || now.getMinuteOfDay > orderStopMinutes) { // TODO 別の日チェックはちゃんとやる
               s"<@$userId> 本日の注文は締め切られました。"
             } else {
 
@@ -137,7 +162,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
             case ex: Exception =>
               ex.printStackTrace()
 
-              "予期せぬエラーが発生しました。"
+              s"<@$userId> 予期せぬエラーが発生しました。"
 
           }
 
@@ -166,7 +191,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
       }
     } catch {
       case e: Exception => e.printStackTrace()
-        Ok
+        InternalServerError
     }
   }
 
@@ -175,18 +200,22 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
    * @param date
    * @return
    */
-  def isPublicHoliday(date: DateTime): Boolean = {
-    ws.url("https://holidays-jp.github.io/api/v1/date.json")
-      .withRequestTimeout(5000.millis)
-      .get()
-      .map {
-        response =>
-          (response.json \ date.toString("yyyy-MM-dd")).validate[String] match {
-            case JsSuccess(value, path) => return true
-            case _ =>
-          }
-      }
+  def getPublicHoliday(date: DateTime): Option[String] = {
+    try {
+      ws.url("https://holidays-jp.github.io/api/v1/date.json")
+        .withRequestTimeout(5000.millis)
+        .get()
+        .map {
+          response =>
+            (response.json \ date.toString("yyyy-MM-dd")).validate[String] match {
+              case JsSuccess(value, path) => return Option(value)
+              case _ =>
+            }
+        }
+    } catch {
+      case e:Exception => e.printStackTrace()
+    }
 
-    false
+    None
   }
 }

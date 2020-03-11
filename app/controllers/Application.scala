@@ -21,7 +21,9 @@ import scala.concurrent.ExecutionContext.Implicits.global
 @Singleton
 class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends AbstractController(cc) {
 
-  def index = Action {
+  def index = Action { request =>
+    println(request.headers.toMap)
+
     Ok
   }
 
