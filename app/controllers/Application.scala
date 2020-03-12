@@ -22,7 +22,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends AbstractController(cc) {
 
   def index = Action { request =>
-    println(request.headers.toMap)
+    //println(request.headers.toMap)
 
     Ok
   }

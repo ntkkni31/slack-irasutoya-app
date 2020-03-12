@@ -2,23 +2,71 @@ package controllers.tamagoya
 
 import com.typesafe.config.ConfigFactory
 import javax.inject.{Inject, Singleton}
-import play.api.libs.json.{JsSuccess, Json}
+import play.api.libs.json.{JsError, JsSuccess, JsValue, Json}
 import play.api.libs.ws.WSClient
-import play.api.mvc.{AbstractController, ControllerComponents}
+import play.api.mvc.{AbstractController, Action, AnyContent, ControllerComponents}
 
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.sendgrid.{Method, Request, SendGrid}
 import com.sendgrid.helpers.mail.Mail
 import com.sendgrid.helpers.mail.objects.{Content, Email}
-
 import org.joda.time.{DateTime, DateTimeZone}
 
 @Singleton
 class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends AbstractController(cc) {
+  private val config = ConfigFactory.load()
 
-  def takeOrder = Action { _ =>
+  def actionEndpoint: Action[AnyContent] = Action { request =>
+    request.body.asJson match {
+      case Some(json) =>
+        (json \ "challenge").validate[String] match {
+          case JsSuccess(challenge, _) =>
+            (json \ "type").validate[String] match {
+              case JsSuccess(typeValue, _) => if (typeValue == "url_verification" && (json \ "token").validate[String].isSuccess) {
+                Ok(challenge).as("text/plain")
+              } else {
+                NoContent
+              }
+              case _ => NoContent
+            }
+          case _ =>
 
+            if (isTrigger(json)) {
+              println(json)
+              //postTakeOrderMessage
+            }
+
+            Ok
+        }
+      case None => NoContent
+    }
+  }
+
+  private def isTrigger(json: JsValue): Boolean = {
+    val channel = (json \ "event" \ "channel").validate[String] match {
+      case JsSuccess(v, _) => v
+      case _ => null
+    }
+
+    val botId = (json \ "event" \ "bot_id").validate[String] match {
+      case JsSuccess(v, _) => v
+      case _ => null
+    }
+
+    channel == config.getString("tamagoya.channel") //&& botId == config.getString("tamagoya.todayBot")
+  }
+
+  def takeOrder: Action[AnyContent] = Action { _ =>
+    postTakeOrderMessage
+    Ok
+  }
+
+  /**
+   * slackにオーダーメッセ時を送信
+   * @return
+   */
+  private def postTakeOrderMessage = {
     try {
       val now = DateTime.now(DateTimeZone.forID("Asia/Tokyo"))
 
@@ -41,13 +89,14 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
         Some(publicHolidayJson)
       } else {
+        val orderStop = config.getString("tamagoya.orderStopTime")
         val takeOrderJson = Json.obj(
           "blocks" -> Json.arr(
             Json.obj(
               "type" -> "section",
               "text" -> Json.obj(
                 "type" -> "mrkdwn",
-                "text" -> "注文を選択してください。"
+                "text" -> s"注文を選択してください。 (${orderStop}〆)"
               )
             ),
             Json.obj(
@@ -90,7 +139,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
       }
 
       messageJson match {
-        case Some(json) =>  val url = ConfigFactory.load().getString("tamagoya.takeOrder.webhookUrl")
+        case Some(json) => val url = config.getString("tamagoya.takeOrder.webhookUrl")
           ws.url(url).addHttpHeaders("Content-Type" -> "application/json")
             .withRequestTimeout(5000.millis)
             .post(json)
@@ -100,18 +149,15 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     } catch {
       case e: Exception => e.printStackTrace()
     }
-    Ok
   }
 
-  def acceptOrder = Action { request =>
+  def acceptOrder: Action[AnyContent] = Action { request =>
     try {
       request.body.asFormUrlEncoded match {
         case Some(x) =>
           val payload = x("payload").head
 
           println(payload)
-
-          val config = ConfigFactory.load()
 
           val json = Json.parse(payload)
 
