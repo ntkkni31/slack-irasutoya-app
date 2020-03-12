@@ -33,8 +33,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
           case _ =>
 
             if (isTrigger(json)) {
-              println(json)
-              //postTakeOrderMessage
+              postTakeOrderMessage
             }
 
             Ok
@@ -43,6 +42,11 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     }
   }
 
+  /**
+   * オーダーメッセージを送信するトリガー判定
+   * @param json
+   * @return
+   */
   private def isTrigger(json: JsValue): Boolean = {
     val channel = (json \ "event" \ "channel").validate[String] match {
       case JsSuccess(v, _) => v
@@ -54,16 +58,32 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
       case _ => null
     }
 
-    channel == config.getString("tamagoya.channel") //&& botId == config.getString("tamagoya.todayBot")
+    if (channel == config.getString("tamagoya.channel")) {
+      println(json)
+    }
+
+    // 特定のボットが特定のメッセージを送信したら
+    if (channel == config.getString("tamagoya.channel") && botId == config.getString("tamagoya.todayBot")) {
+      (json \ "event" \ "text").validate[String] match {
+        case JsSuccess(text, _) => text.contains("本日のたまごや")
+        case _ => false
+      }
+    } else {
+      false
+    }
   }
 
+  /**
+   * トリガーでうまく動かなかったとき用に、URL叩いて動かせるように
+   * @return
+   */
   def takeOrder: Action[AnyContent] = Action { _ =>
     postTakeOrderMessage
     Ok
   }
 
   /**
-   * slackにオーダーメッセ時を送信
+   * slackにオーダーメッセージを送信
    * @return
    */
   private def postTakeOrderMessage = {
