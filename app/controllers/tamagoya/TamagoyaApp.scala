@@ -2,7 +2,7 @@ package controllers.tamagoya
 
 import com.typesafe.config.ConfigFactory
 import javax.inject.{Inject, Singleton}
-import play.api.libs.json.{JsError, JsSuccess, JsValue, Json}
+import play.api.libs.json.{JsArray, JsObject, JsSuccess, JsValue, Json}
 import play.api.libs.ws.WSClient
 import play.api.mvc.{AbstractController, Action, AnyContent, ControllerComponents}
 
@@ -12,9 +12,16 @@ import com.sendgrid.{Method, Request, SendGrid}
 import com.sendgrid.helpers.mail.Mail
 import com.sendgrid.helpers.mail.objects.{Content, Email}
 import org.joda.time.{DateTime, DateTimeZone}
+import play.api.cache.{NamedCache, SyncCacheApi}
+
+import scala.concurrent.Await
 
 @Singleton
-class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends AbstractController(cc) {
+class TamagoyaApp @Inject()(cc: ControllerComponents,
+                            ws: WSClient,
+                            @NamedCache("slackUserCache") userNameCache: SyncCacheApi,
+                            @NamedCache("publicHolidayCache") publicHolidayCache: SyncCacheApi) extends AbstractController(cc) {
+
   private val config = ConfigFactory.load()
 
   def actionEndpoint: Action[AnyContent] = Action { request =>
@@ -44,7 +51,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
   /**
    * オーダーメッセージを送信するトリガー判定
-   * @param json
+   * @param json jsonオブジェクト
    * @return
    */
   private def isTrigger(json: JsValue): Boolean = {
@@ -90,18 +97,20 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     try {
       val now = DateTime.now(DateTimeZone.forID("Asia/Tokyo"))
 
-      val publicHoliday = getPublicHoliday(now)
+      val publicHoliday = getOrUpdatePublicHoliday(now)
 
       val messageJson = if (now.getDayOfWeek < 1 || 5 < now.getDayOfWeek) {
         None
       } else if (publicHoliday.nonEmpty) {
+        val text = s"本日は *${publicHoliday.get}* です。"
         val publicHolidayJson = Json.obj(
+          "text" -> text,
           "blocks" -> Json.arr(
             Json.obj(
               "type" -> "section",
               "text" -> Json.obj(
                 "type" -> "mrkdwn",
-                "text" -> s"本日は *${publicHoliday.get}* です。"
+                "text" -> text
               )
             )
           )
@@ -110,13 +119,16 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
         Some(publicHolidayJson)
       } else {
         val orderStop = config.getString("tamagoya.orderStopTime")
+        val text = s"注文を選択してください。 (${orderStop}〆)"
+
         val takeOrderJson = Json.obj(
+          "text" -> text,
           "blocks" -> Json.arr(
             Json.obj(
               "type" -> "section",
               "text" -> Json.obj(
                 "type" -> "mrkdwn",
-                "text" -> s"注文を選択してください。 (${orderStop}〆)"
+                "text" -> text
               )
             ),
             Json.obj(
@@ -181,14 +193,20 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
           val json = Json.parse(payload)
 
-          val responseUrl = (json \ "response_url").as[String]
+          //val responseUrl = (json \ "response_url").as[String]
           val userName = (json \ "user" \ "username").as[String]
           val userId = (json \ "user" \ "id").as[String]
           val messageTs = (json \ "container" \ "message_ts").as[String]
+          val channelId = (json \ "container" \ "channel_id").as[String]
           val order = (json \ "actions" \ 0 \ "value").as[String]
           val orderText = (json \ "actions" \ 0 \ "text" \ "text").as[String]
 
-          val message = try {
+          val realName = userNameCache.get[String](userId) match {
+            case Some(rn) => rn
+            case None => updateAndGetUserNameCache(userId).orNull
+          }
+
+          val text = try {
             val now = DateTime.now(DateTimeZone.forID("Asia/Tokyo"))
             val messageDate = new DateTime(new java.util.Date(messageTs.split('.')(0).toLong * 1000), DateTimeZone.forID("Asia/Tokyo"))
             println(now)
@@ -205,6 +223,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
               val mailJson = Json.obj(
                 "date" -> now.toString("yyyy-MM-dd HH:mm:ss"),
                 "username" -> userName,
+                "real_name" -> realName,
                 "order" -> order
               )
 
@@ -222,7 +241,8 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
               sg.api(mailRequest)
 
               // slackへのレスポンス
-              if (order == "cancel") s"$userName がキャンセルしました。" else s"$userName が *$orderText* を注文しました。"
+              val nameForMessage = if(realName == null) userName else realName
+              if (order == "cancel") s"$nameForMessage がキャンセルしました。" else s"$nameForMessage が *$orderText* を注文しました。"
             }
           } catch {
             case ex: Exception =>
@@ -234,23 +254,38 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
           // ボタンのレスポンスにすると一人しか受け付けられないので、スレッドでリプライしておく
           val res = Json.obj(
+            "channel" -> channelId,
             "thread_ts" -> messageTs,
-            "as_user" -> true,
-            "user_id" -> userId,
+            //"as_user" -> false,
+            "username" -> "Tamagoya/Lunch Order",
+            //"user_id" -> userId,
+            "text" -> text,
             "blocks" -> Json.arr(
               Json.obj(
                 "type" -> "section",
                 "text" -> Json.obj(
                   "type" -> "mrkdwn",
-                  "text" -> message
+                  "text" -> text
                 )
               )
             )
           )
 
-          ws.url(config.getString("tamagoya.takeOrder.webhookUrl")).addHttpHeaders("Content-Type" -> "application/json")
+          ws.url("https://slack.com/api/chat.postMessage")
+            .addHttpHeaders("Content-Type" -> "application/json",
+              "Authorization" -> s"Bearer ${config.getString("tamagoya.botAuthToken")}")
             .withRequestTimeout(5000.millis)
             .post(res)
+            .map(response => {
+              (response.json \ "ok").validate[Boolean] match {
+                case JsSuccess(ok, _) if ok =>
+                case _ => println(response.json) // エラー("ok":true 以外)のときだけログに出す
+              }
+            })
+
+//          ws.url(config.getString("tamagoya.takeOrder.webhookUrl")).addHttpHeaders("Content-Type" -> "application/json")
+//            .withRequestTimeout(5000.millis)
+//            .post(res)
 
           Ok
         case None => Ok
@@ -263,25 +298,64 @@ class TamagoyaApp @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
 
   /**
    * 祝日判定
-   * @param date
+   * @param date 判定対象の日時オブジェクト
    * @return
    */
-  def getPublicHoliday(date: DateTime): Option[String] = {
+  def getOrUpdatePublicHoliday(date: DateTime): Option[String] = {
+    // 祝日はまあよっぽど変わらないのでsynchronizedにしなくてもいいか
     try {
-      ws.url("https://holidays-jp.github.io/api/v1/date.json")
+      publicHolidayCache.get(date.toString("yyyy-01-01")) match {
+        case Some(_) => // 1月1日があるということは、他のキャッシュ値もあるということ
+        case None =>
+
+          val f = ws.url("https://holidays-jp.github.io/api/v1/date.json")
+            .withRequestTimeout(5000.millis)
+            .get()
+            .map {
+              response =>
+
+                for (elem <- response.json.as[JsObject].fields) {
+                  publicHolidayCache.set(elem._1, elem._2.as[String])
+                  //println(elem)
+                }
+            }
+
+          Await.result(f, Duration.Inf)
+      }
+
+      publicHolidayCache.get(date.toString("yyyy-MM-dd"))
+    } catch {
+      case e:Exception => e.printStackTrace()
+        None
+    }
+  }
+
+  private def updateAndGetUserNameCache(userId: String) = synchronized {
+    try {
+      val f = ws.url(s"https://slack.com/api/users.list?token=${config.getString("tamagoya.botAuthToken")}")
+        .addHttpHeaders("Content-Type" -> "application/x-www-form-urlencoded")
         .withRequestTimeout(5000.millis)
         .get()
         .map {
           response =>
-            (response.json \ date.toString("yyyy-MM-dd")).validate[String] match {
-              case JsSuccess(value, path) => return Option(value)
-              case _ =>
-            }
+            (response.json \ "members").as[JsArray].value.foreach(m => {
+
+              val id = (m \ "id").validate[String]
+              val name = (m \ "name").validate[String]
+              val realName = (m \ "real_name").validate[String]
+
+              if (id.isSuccess && name.isSuccess && realName.isSuccess){
+                userNameCache.set(id.get, realName.get)
+              }
+            })
+
+            userNameCache.get(userId)
         }
+
+      Await.result(f, Duration.Inf)
     } catch {
       case e:Exception => e.printStackTrace()
+        None
     }
-
-    None
   }
 }

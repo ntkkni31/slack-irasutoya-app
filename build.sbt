@@ -10,7 +10,10 @@ libraryDependencies ++= Seq(
   jdbc,
   "org.postgresql" % "postgresql" % "9.4-1201-jdbc41",
   ws,
-  guice
+  guice,
+  ehcache,
+  cacheApi,
+  jcache
 )
 
 libraryDependencies <+= scalaVersion("org.scala-lang" % "scala-compiler" % _ )
@@ -18,3 +21,6 @@ libraryDependencies += "net.ruippeixotog" %% "scala-scraper" % "2.1.0"
 
 // https://mvnrepository.com/artifact/com.sendgrid/sendgrid-java
 libraryDependencies += "com.sendgrid" % "sendgrid-java" % "4.4.5"
+
+// https://mvnrepository.com/artifact/org.jsr107.ri/cache-annotations-ri-guice
+libraryDependencies += "org.jsr107.ri" % "cache-annotations-ri-guice" % "1.1.0"
