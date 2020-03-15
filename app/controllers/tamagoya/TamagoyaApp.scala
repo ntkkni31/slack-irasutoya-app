@@ -13,6 +13,7 @@ import com.sendgrid.helpers.mail.Mail
 import com.sendgrid.helpers.mail.objects.{Content, Email}
 import org.joda.time.{DateTime, DateTimeZone}
 import play.api.cache.{NamedCache, SyncCacheApi}
+import play.api.db.Database
 
 import scala.concurrent.Await
 
@@ -20,7 +21,8 @@ import scala.concurrent.Await
 class TamagoyaApp @Inject()(cc: ControllerComponents,
                             ws: WSClient,
                             @NamedCache("slackUserCache") userNameCache: SyncCacheApi,
-                            @NamedCache("publicHolidayCache") publicHolidayCache: SyncCacheApi) extends AbstractController(cc) {
+                            @NamedCache("publicHolidayCache") publicHolidayCache: SyncCacheApi,
+                            db: Database) extends AbstractController(cc) {
 
   private val config = ConfigFactory.load()
 
@@ -40,7 +42,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
           case _ =>
 
             if (isTrigger(json)) {
-              postTakeOrderMessage
+              postTakeOrderMessage()
             }
 
             Ok
@@ -81,26 +83,31 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
   }
 
   /**
-   * トリガーでうまく動かなかったとき用に、URL叩いて動かせるように
-   * @return
-   */
-  def takeOrder: Action[AnyContent] = Action { _ =>
-    postTakeOrderMessage
-    Ok
-  }
-
-  /**
    * slackにオーダーメッセージを送信
    * @return
    */
-  private def postTakeOrderMessage = {
+  private def postTakeOrderMessage(url: String = config.getString("tamagoya.takeOrder.webhookUrl")) = {
     try {
       val now = DateTime.now(DateTimeZone.forID("Asia/Tokyo"))
 
       val publicHoliday = getOrUpdatePublicHoliday(now)
 
       val messageJson = if (now.getDayOfWeek < 1 || 5 < now.getDayOfWeek) {
-        None
+        val text = s"本日は *休日* です。"
+        val holidayJson = Json.obj(
+          "text" -> text,
+          "blocks" -> Json.arr(
+            Json.obj(
+              "type" -> "section",
+              "text" -> Json.obj(
+                "type" -> "mrkdwn",
+                "text" -> text
+              )
+            )
+          )
+        )
+
+        Option(holidayJson)
       } else if (publicHoliday.nonEmpty) {
         val text = s"本日は *${publicHoliday.get}* です。"
         val publicHolidayJson = Json.obj(
@@ -116,12 +123,13 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
           )
         )
 
-        Some(publicHolidayJson)
+        Option(publicHolidayJson)
       } else {
         val orderStop = config.getString("tamagoya.orderStopTime")
         val text = s"注文を選択してください。 (${orderStop}〆)"
 
         val takeOrderJson = Json.obj(
+          "response_type" -> "in_channel",
           "text" -> text,
           "blocks" -> Json.arr(
             Json.obj(
@@ -167,11 +175,11 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
           )
         )
 
-        Some(takeOrderJson)
+        Option(takeOrderJson)
       }
 
       messageJson match {
-        case Some(json) => val url = config.getString("tamagoya.takeOrder.webhookUrl")
+        case Some(json) =>
           ws.url(url).addHttpHeaders("Content-Type" -> "application/json")
             .withRequestTimeout(5000.millis)
             .post(json)
@@ -193,9 +201,10 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
 
           val json = Json.parse(payload)
 
-          //val responseUrl = (json \ "response_url").as[String]
+          val responseUrl = (json \ "response_url").as[String]
           val userName = (json \ "user" \ "username").as[String]
           val userId = (json \ "user" \ "id").as[String]
+          val channelName = (json \ "channel" \ "name").as[String]
           val messageTs = (json \ "container" \ "message_ts").as[String]
           val channelId = (json \ "container" \ "channel_id").as[String]
           val order = (json \ "actions" \ 0 \ "value").as[String]
@@ -215,7 +224,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
             val orderStop = config.getString("tamagoya.orderStopTime").split(':')
             val orderStopMinutes = orderStop(0).toInt * 60 + orderStop(1).toInt
 
-            if (messageDate.getDayOfMonth != now.getDayOfMonth || now.getMinuteOfDay > orderStopMinutes) { // TODO 別の日チェックはちゃんとやる
+            if (messageDate.getDayOfYear != now.getDayOfYear || now.getMinuteOfDay > orderStopMinutes) { // TODO 別の日チェックはちゃんとやる
               s"<@$userId> 本日の注文は締め切られました。"
             } else {
 
@@ -252,40 +261,66 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
 
           }
 
-          // ボタンのレスポンスにすると一人しか受け付けられないので、スレッドでリプライしておく
-          val res = Json.obj(
-            "channel" -> channelId,
-            "thread_ts" -> messageTs,
-            //"as_user" -> false,
-            "username" -> "Tamagoya/Lunch Order",
-            //"user_id" -> userId,
-            "text" -> text,
-            "blocks" -> Json.arr(
-              Json.obj(
-                "type" -> "section",
-                "text" -> Json.obj(
-                  "type" -> "mrkdwn",
-                  "text" -> text
+          if (channelName == "directmessage") {
+            // TODO ダイレクトメッセージの判定はconversations.listでちゃんとやるべきだが
+            val res = Json.obj(
+              //"as_user" -> false,
+              "username" -> "Tamagoya/Lunch Order",
+              //"user_id" -> userId,
+              "text" -> text,
+              "blocks" -> Json.arr(
+                Json.obj(
+                  "type" -> "section",
+                  "text" -> Json.obj(
+                    "type" -> "mrkdwn",
+                    "text" -> text
+                  )
                 )
               )
             )
-          )
 
-          ws.url("https://slack.com/api/chat.postMessage")
-            .addHttpHeaders("Content-Type" -> "application/json",
-              "Authorization" -> s"Bearer ${config.getString("tamagoya.botAuthToken")}")
-            .withRequestTimeout(5000.millis)
-            .post(res)
-            .map(response => {
-              (response.json \ "ok").validate[Boolean] match {
-                case JsSuccess(ok, _) if ok =>
-                case _ => println(response.json) // エラー("ok":true 以外)のときだけログに出す
-              }
-            })
+            ws.url(responseUrl)
+              .addHttpHeaders("Content-Type" -> "application/json")
+              .withRequestTimeout(5000.millis)
+              .post(res)
+              .map(response => {
+                (response.json \ "ok").validate[Boolean] match {
+                  case JsSuccess(ok, _) if ok =>
+                  case _ => println(response.json) // エラー("ok":true 以外)のときだけログに出す
+                }
+              })
+          } else {
+            // ボタンのレスポンスにすると一人しか受け付けられないので、スレッドでリプライしておく
+            val res = Json.obj(
+              "channel" -> channelId,
+              "thread_ts" -> messageTs,
+              //"as_user" -> false,
+              "username" -> "Tamagoya/Lunch Order",
+              //"user_id" -> userId,
+              "text" -> text,
+              "blocks" -> Json.arr(
+                Json.obj(
+                  "type" -> "section",
+                  "text" -> Json.obj(
+                    "type" -> "mrkdwn",
+                    "text" -> text
+                  )
+                )
+              )
+            )
 
-//          ws.url(config.getString("tamagoya.takeOrder.webhookUrl")).addHttpHeaders("Content-Type" -> "application/json")
-//            .withRequestTimeout(5000.millis)
-//            .post(res)
+            ws.url("https://slack.com/api/chat.postMessage")
+              .addHttpHeaders("Content-Type" -> "application/json",
+                "Authorization" -> s"Bearer ${config.getString("tamagoya.botAuthToken")}")
+              .withRequestTimeout(5000.millis)
+              .post(res)
+              .map(response => {
+                (response.json \ "ok").validate[Boolean] match {
+                  case JsSuccess(ok, _) if ok =>
+                  case _ => println(response.json) // エラー("ok":true 以外)のときだけログに出す
+                }
+              })
+          }
 
           Ok
         case None => Ok
@@ -356,6 +391,55 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
     } catch {
       case e:Exception => e.printStackTrace()
         None
+    }
+  }
+
+  /**
+   * コマンド叩いても動かせるように
+   * @return
+   */
+  def command:Action[AnyContent] = Action { request =>
+    try {
+      request.body.asFormUrlEncoded match {
+        case Some(x) =>
+          val arg = x("text").head
+          val responseUrl = x("response_url").head
+          val command = x("command").head
+          val userId = x("user_id").head
+
+          if(arg != null && arg.length > 0) {
+            command match {
+              case "/tamagoya" =>
+                arg match {
+                  case "order" =>
+                    postTakeOrderMessage(responseUrl)
+                  case _ =>
+                }
+              case _ =>
+            }
+          }
+
+        case None =>
+      }
+
+    } catch {
+      case e:Exception => e.printStackTrace()
+    }
+
+    Ok
+  }
+
+  private def updateOrderDb(date: DateTime, username: String, order: String) = {
+    try {
+      db.withConnection { implicit c =>
+
+        val stmt = c.createStatement()
+        val rs = stmt.executeQuery("UPDATE order_list SET ()")
+
+      }
+
+    } catch {
+      case e: Exception => e.printStackTrace()
     }
   }
 }

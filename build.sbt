@@ -24,3 +24,6 @@ libraryDependencies += "com.sendgrid" % "sendgrid-java" % "4.4.5"
 
 // https://mvnrepository.com/artifact/org.jsr107.ri/cache-annotations-ri-guice
 libraryDependencies += "org.jsr107.ri" % "cache-annotations-ri-guice" % "1.1.0"
+
+// https://mvnrepository.com/artifact/org.playframework.anorm/anorm
+libraryDependencies += "org.playframework.anorm" %% "anorm" % "2.6.5"
