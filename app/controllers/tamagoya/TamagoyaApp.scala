@@ -68,14 +68,20 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
     }
 
     if (channel == config.getString("tamagoya.channel")) {
-      println(json)
+      println(json.toString())
     }
 
     // 特定のボットが特定のメッセージを送信したら
     if (channel == config.getString("tamagoya.channel") && botId == config.getString("tamagoya.todayBot")) {
       (json \ "event" \ "text").validate[String] match {
         case JsSuccess(text, _) => text.contains("本日のたまごや")
-        case _ => false
+        case _ =>
+          (json \ "event" \ "attachments").validate[JsValue] match {
+            case JsSuccess(attachments, _) =>
+              println("attachments.toString(): " + attachments.toString())
+              attachments.toString().contains("本日のたまごや")
+            case _ => false
+          }
       }
     } else {
       false
@@ -183,6 +189,12 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
           ws.url(url).addHttpHeaders("Content-Type" -> "application/json")
             .withRequestTimeout(5000.millis)
             .post(json)
+            .map(response => {
+              (response.json \ "ok").validate[Boolean] match {
+                case JsSuccess(ok, _) if ok =>
+                case _ => println(response.json) // エラー("ok":true 以外)のときだけログに出す
+              }
+            })
         case None =>
       }
 
