@@ -73,16 +73,17 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
 
     // 特定のボットが特定のメッセージを送信したら
     if (channel == config.getString("tamagoya.channel") && botId == config.getString("tamagoya.todayBot")) {
-      (json \ "event" \ "text").validate[String] match {
+      var hasKeyword = (json \ "event" \ "text").validate[String] match {
         case JsSuccess(text, _) => text.contains("本日のたまごや")
-        case _ =>
-          (json \ "event" \ "attachments").validate[JsValue] match {
-            case JsSuccess(attachments, _) =>
-              println("attachments.toString(): " + attachments.toString())
-              attachments.toString().contains("本日のたまごや")
-            case _ => false
-          }
+        case _ => false
       }
+
+      hasKeyword |= ((json \ "event" \ "attachments").validate[JsValue] match {
+        case JsSuccess(attachments, _) => attachments.toString().contains("本日のたまごや")
+        case _ => false
+      })
+
+      hasKeyword
     } else {
       false
     }

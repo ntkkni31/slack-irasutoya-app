@@ -44,11 +44,6 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
                 Ok
               case "/irasutoya_message" => respondMessage(arg, responseUrl, userId)
                 Ok
-              case "/url_encode" =>
-                Ok(createConvertedMessage(arg, new URLCodec("UTF-8").encode(arg)))
-              case "/url_decode" =>
-                Ok(createConvertedMessage(arg, new URLCodec("UTF-8").decode(arg)))
-
               case _ => Ok
             }
           } else {
@@ -63,27 +58,6 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
         Ok
     }
 
-  }
-
-  private def createConvertedMessage(source: String, destination: String) = {
-    Json.obj(
-      "blocks" -> Json.arr(
-        Json.obj(
-          "type" -> "section",
-          "text" -> Json.obj(
-            "type" -> "mrkdwn",
-            "text" -> s"変換前: $source"
-          )
-        ),
-        Json.obj(
-          "type" -> "section",
-          "text" -> Json.obj(
-            "type" -> "mrkdwn",
-            "text" -> s"変換後: $destination"
-          )
-        )
-      )
-    )
   }
 
   private def respondImage(keyword: String, responseUrl: String, userId: String):Unit = Future {

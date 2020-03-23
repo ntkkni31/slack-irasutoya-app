@@ -9,6 +9,7 @@ scalaVersion := "2.11.7"
 libraryDependencies ++= Seq(
   jdbc,
   "org.postgresql" % "postgresql" % "9.4-1201-jdbc41",
+  "com.h2database" % "h2" % "1.4.192",
   ws,
   guice,
   ehcache,
