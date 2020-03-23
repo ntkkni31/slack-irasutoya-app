@@ -11,6 +11,7 @@ import play.api.libs.json.Json
 import net.ruippeixotog.scalascraper.dsl.DSL._
 import net.ruippeixotog.scalascraper.dsl.DSL.Extract._
 import net.ruippeixotog.scalascraper.dsl.DSL.Parse._
+import org.apache.commons.codec.net.URLCodec
 import play.api.libs.ws.WSClient
 
 import scala.concurrent.Future
@@ -32,27 +33,57 @@ class Application @Inject()(cc: ControllerComponents, ws: WSClient) extends Abst
     try {
       request.body.asFormUrlEncoded match {
         case Some(x) =>
-          val keyword = x("text").head
+          val arg = x("text").head
           val responseUrl = x("response_url").head
           val command = x("command").head
           val userId = x("user_id").head
 
-          if(keyword != null && keyword.length > 0) {
+          if(arg != null && arg.length > 0) {
             command match {
-              case "/irasutoya" => respondImage(keyword, responseUrl, userId)
-              case "/irasutoya_message" => respondMessage(keyword, responseUrl, userId)
-              case _ =>
+              case "/irasutoya" => respondImage(arg, responseUrl, userId)
+                Ok
+              case "/irasutoya_message" => respondMessage(arg, responseUrl, userId)
+                Ok
+              case "/url_encode" =>
+                Ok(createConvertedMessage(arg, new URLCodec("UTF-8").encode(arg)))
+              case "/url_decode" =>
+                Ok(createConvertedMessage(arg, new URLCodec("UTF-8").decode(arg)))
+
+              case _ => Ok
             }
+          } else {
+            Ok
           }
 
-        case None =>
+        case None => Ok
       }
 
     } catch {
       case e:Exception => e.printStackTrace()
+        Ok
     }
 
-    Ok
+  }
+
+  private def createConvertedMessage(source: String, destination: String) = {
+    Json.obj(
+      "blocks" -> Json.arr(
+        Json.obj(
+          "type" -> "section",
+          "text" -> Json.obj(
+            "type" -> "mrkdwn",
+            "text" -> s"変換前: $source"
+          )
+        ),
+        Json.obj(
+          "type" -> "section",
+          "text" -> Json.obj(
+            "type" -> "mrkdwn",
+            "text" -> s"変換後: $destination"
+          )
+        )
+      )
+    )
   }
 
   private def respondImage(keyword: String, responseUrl: String, userId: String):Unit = Future {

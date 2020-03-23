@@ -425,20 +425,23 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
                 arg match {
                   case "order" =>
                     postTakeOrderMessage(responseUrl)
-                  case _ =>
+                    Ok
+                  case _ => Ok
                 }
-              case _ =>
+              case _ => Ok
             }
+          } else {
+            Ok
           }
 
-        case None =>
+        case None => Ok
       }
 
     } catch {
       case e:Exception => e.printStackTrace()
+        Ok
     }
 
-    Ok
   }
 
   private def updateOrderDb(date: DateTime, username: String, order: String) = {
