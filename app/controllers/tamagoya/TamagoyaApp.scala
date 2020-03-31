@@ -397,7 +397,7 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
               }
             })
 
-            userNameCache.get(userId)
+            userNameCache.get[String](userId)
         }
 
       Await.result(f, Duration.Inf)
