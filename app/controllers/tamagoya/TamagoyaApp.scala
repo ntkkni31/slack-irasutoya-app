@@ -11,6 +11,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import com.sendgrid.{Method, Request, SendGrid}
 import com.sendgrid.helpers.mail.Mail
 import com.sendgrid.helpers.mail.objects.{Content, Email}
+import org.apache.commons.lang3.StringUtils
 import org.joda.time.{DateTime, DateTimeZone}
 import play.api.cache.{NamedCache, SyncCacheApi}
 import play.api.db.Database
@@ -391,9 +392,15 @@ class TamagoyaApp @Inject()(cc: ControllerComponents,
               val id = (m \ "id").validate[String]
               val name = (m \ "name").validate[String]
               val realName = (m \ "real_name").validate[String]
+              val displayName = (m \ "profile" \ "display_name").validate[String]
 
               if (id.isSuccess && name.isSuccess && realName.isSuccess){
-                userNameCache.set(id.get, realName.get)
+                val dn = displayName.getOrElse("")
+                if (StringUtils.isEmpty(dn)) {
+                  userNameCache.set(id.get, realName.get)
+                } else {
+                  userNameCache.set(id.get, displayName.get)
+                }
               }
             })
 
